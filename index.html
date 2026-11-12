@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SOCCER-FK</title>
+  
+  <!-- MediaPipe 安定版CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+  <style>
+    :root {
+      --bg-dark: #0a0d14;
+      --bg-card: #131822;
+      --bg-card-sub: #1a2230;
+      --border: #242f42;
+      --plant-color: #10b981;  /* 軸足: エメラルド */
+      --kick-color: #f59e0b;   /* 蹴り足: オレンジゴールド */
+      --trunk-color: #38bdf8;  /* 体幹: スカイブルー */
+      --good: #22c55e;
+      --fair: #38bdf8;
+      --warn: #f43f5e;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      background: var(--bg-dark); color: #f1f5f9;
+      height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+    }
+
+    /* ヘッダー */
+    header {
+      height: 48px; background: var(--bg-card); display: flex; align-items: center;
+      justify-content: space-between; padding: 0 16px; border-bottom: 1.5px solid var(--border); flex-shrink: 0;
+    }
+    .logo-area { display: flex; align-items: center; gap: 8px; }
+    .logo { font-size: 1.2em; font-weight: 900; color: var(--plant-color); letter-spacing: 0.5px; }
+    .header-ctrls { display: flex; align-items: center; gap: 10px; }
+    .select-group { display: flex; align-items: center; gap: 5px; }
+    .select-label { font-size: 0.78em; font-weight: bold; color: #94a3b8; }
+    select.custom-select {
+      background: #1e2638; color: #fff; border: 1.5px solid #334155; padding: 5px 10px;
+      border-radius: 6px; font-size: 0.85em; font-weight: bold; outline: none; cursor: pointer;
+    }
+    select.custom-select:focus { border-color: var(--plant-color); }
+    .btn-file {
+      background: var(--plant-color); color: #042f2e; padding: 6px 14px; border-radius: 6px;
+      font-size: 0.85em; font-weight: 800; cursor: pointer; transition: filter 0.2s;
+    }
+    .btn-file:hover { filter: brightness(1.1); }
+    input[type="file"] { display: none; }
+
+    /* メインレイアウト */
+    main {
+      flex: 1; display: flex; flex-direction: column; gap: 8px;
+      padding: 10px 16px; height: calc(100vh - 48px); overflow: hidden;
+    }
+
+    /* 上段：ステージ ＆ 操作パネル */
+    .top-workspace {
+      flex: 1; display: grid; grid-template-columns: 1.25fr 0.95fr; gap: 12px; min-height: 0;
+    }
+
+    .video-container {
+      position: relative; width: 100%; height: 100%; background: #000; border-radius: 10px;
+      overflow: hidden; display: flex; justify-content: center; align-items: center;
+      border: 1.5px solid var(--border);
+    }
+    .video-stage { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+    video { max-width: 100%; max-height: 100%; object-fit: contain; }
+    canvas#videoCanvas { position: absolute; pointer-events: none; }
+
+    .side-panel {
+      display: flex; flex-direction: column; gap: 8px; height: 100%;
+      overflow-y: auto; padding-right: 4px;
+    }
+    .side-panel::-webkit-scrollbar { width: 5px; }
+    .side-panel::-webkit-scrollbar-thumb { background: #263346; border-radius: 3px; }
+
+    /* デジタルメーター */
+    .meter-bar { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; flex-shrink: 0; }
+    .meter-card {
+      background: var(--bg-card); border-radius: 8px; padding: 6px; text-align: center;
+      border: 1.5px solid var(--border); display: flex; flex-direction: column; justify-content: center;
+    }
+    .meter-card.plant { border-color: var(--plant-color); }
+    .meter-card.trunk { border-color: var(--trunk-color); }
+    .meter-card.kick { border-color: var(--kick-color); }
+    .meter-phase-tag { font-size: 0.65em; font-weight: 800; padding: 2px 4px; border-radius: 4px; margin-bottom: 2px; display: inline-block; }
+    .tag-plant { background: rgba(16, 185, 129, 0.25); color: #34d399; }
+    .tag-imp { background: rgba(56, 189, 248, 0.25); color: #7dd3fc; }
+    .meter-label { font-size: 0.75em; font-weight: bold; color: #cbd5e0; }
+    .meter-target { font-size: 0.68em; color: #94a3b8; font-weight: bold; margin-top: 1px; }
+    .meter-val { font-size: 1.5em; font-weight: 900; font-family: monospace; line-height: 1.1; margin-top: 2px; }
+    .meter-val.plant { color: #34d399; }
+    .meter-val.trunk { color: #38bdf8; }
+    .meter-val.kick { color: #fbbf24; }
+
+    /* 操作パネルカード */
+    .panel-card {
+      background: var(--bg-card); border-radius: 8px; padding: 10px 12px;
+      border: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
+    }
+    .panel-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.85em; font-weight: bold; }
+    .btn-grid { display: flex; gap: 6px; }
+    .btn-panel {
+      flex: 1; padding: 8px 0; border-radius: 6px; font-weight: bold; cursor: pointer;
+      border: 1.5px solid #334155; background: #1a2230; color: #fff; font-size: 0.82em;
+      transition: all 0.15s; text-align: center;
+    }
+    .btn-panel:hover { background: #263346; }
+    .btn-panel.primary { background: var(--plant-color); color: #042f2e; border: none; font-size: 0.9em; flex: 1.3; font-weight: 800; }
+    .btn-panel.plant.active { border-color: var(--plant-color); background: rgba(16, 185, 129, 0.25); }
+    .btn-panel.kick.active { border-color: var(--kick-color); background: rgba(245, 158, 11, 0.25); }
+    .btn-panel.trim.active { border-color: var(--plant-color); background: rgba(16, 185, 129, 0.2); }
+    .score-badge { font-size: 1.4em; font-weight: 900; color: var(--kick-color); font-family: monospace; }
+
+    /* アドバイス枠 */
+    .advice-section { display: flex; flex-direction: column; gap: 6px; }
+    .advice-phase-group {
+      background: var(--bg-card-sub); border-radius: 6px; padding: 6px 8px; border: 1px solid var(--border);
+    }
+    .phase-header {
+      font-size: 0.74em; font-weight: 900; letter-spacing: 0.5px; margin-bottom: 4px; display: flex; align-items: center; gap: 4px;
+    }
+    .phase-header.plant { color: #34d399; }
+    .phase-header.imp { color: #7dd3fc; }
+
+    .advice-card {
+      background: var(--bg-card); border-radius: 4px; padding: 6px 8px; margin-bottom: 3px;
+      border-left: 3.5px solid #334155; font-size: 0.8em; display: flex; justify-content: space-between; align-items: center;
+    }
+    .advice-card:last-child { margin-bottom: 0; }
+    .advice-card.good { border-left-color: var(--good); background: rgba(34, 197, 94, 0.08); }
+    .advice-card.fair { border-left-color: var(--fair); background: rgba(56, 189, 248, 0.08); }
+    .advice-card.warn { border-left-color: var(--warn); background: rgba(244, 63, 94, 0.08); }
+    .advice-title { font-weight: bold; color: #cbd5e0; }
+    .advice-msg { font-weight: 800; }
+    .advice-msg.good { color: var(--good); }
+    .advice-msg.fair { color: var(--fair); }
+    .advice-msg.warn { color: var(--warn); }
+
+    /* 下段：タイムライン ＆ 直結再生バー（縦サイズを倍の380pxに拡張） */
+    .bottom-timeline-dock {
+      background: var(--bg-card); border-radius: 10px; padding: 10px 14px;
+      border: 1.5px solid var(--border); display: flex; flex-direction: column; gap: 8px;
+      height: 380px; flex-shrink: 0;
+    }
+    .dock-head { display: flex; justify-content: space-between; align-items: center; font-size: 0.78em; font-weight: bold; color: #94a3b8; }
+    .legend { display: flex; gap: 12px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; vertical-align: middle; }
+    .graph-wrap { position: relative; flex: 1; width: 100%; cursor: pointer; min-height: 200px; }
+    canvas#graphCanvas { width: 100%; height: 100%; display: block; }
+
+    .timeline-ctrl-bar {
+      display: flex; flex-direction: column; gap: 6px; background: #0e121a;
+      padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
+    }
+    .seek-slider {
+      width: 100%; height: 8px; -webkit-appearance: none; background: #242f42; border-radius: 4px; outline: none; cursor: pointer;
+    }
+    .seek-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%; background: var(--kick-color); cursor: pointer;
+    }
+    .timeline-ctrl-sub { display: flex; align-items: center; justify-content: space-between; }
+    .ctrl-btns { display: flex; align-items: center; gap: 8px; }
+    .btn-act {
+      background: #1a2230; border: 1.5px solid #334155; color: #fff; font-size: 1.1em;
+      min-width: 44px; height: 36px; border-radius: 6px; cursor: pointer; display: flex;
+      align-items: center; justify-content: center; transition: all 0.15s;
+    }
+    .btn-act:hover { background: #263346; }
+    .btn-act:active { transform: scale(0.96); }
+    .btn-speed { font-size: 0.85em; font-weight: bold; width: 50px; }
+    .time-disp { font-family: monospace; font-size: 0.95em; font-weight: bold; color: #cbd5e0; margin-left: 8px; }
+
+    .btn-capture {
+      background: linear-gradient(135deg, #0284c7, #2563eb); color: #fff; border: none;
+      padding: 0 16px; height: 36px; border-radius: 6px; font-size: 0.88em; font-weight: 800;
+      cursor: pointer; display: flex; align-items: center; gap: 6px; transition: opacity 0.2s;
+    }
+    .btn-capture:hover { opacity: 0.9; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo-area">
+      <div class="logo">⚽ SOCCER-FK</div>
+    </div>
+    <div class="header-ctrls">
+      <div class="select-group">
+        <span class="select-label">利き足:</span>
+        <select id="footScene" class="custom-select">
+          <option value="right">右足キック (右利き)</option>
+          <option value="left">左足キック (左利き)</option>
+        </select>
+      </div>
+
+      <div class="select-group">
+        <span class="select-label">球種:</span>
+        <select id="fkScene" class="custom-select">
+          <option value="curve">カーブ (インフロント)</option>
+          <option value="knuckle">無回転 (ナックル)</option>
+          <option value="drive">ドライブ (縦回転)</option>
+        </select>
+      </div>
+
+      <label class="btn-file">
+        📁 動画読込
+        <input type="file" id="videoUpload" accept="video/*,video/mp4,video/quicktime,.mov,.mp4">
+      </label>
+    </div>
+  </header>
+
+  <main>
+    <div class="top-workspace">
+      <!-- 左：ビデオステージ -->
+      <div class="video-container" id="videoContainer">
+        <div class="video-stage">
+          <video id="video" playsinline webkit-playsinline muted></video>
+          <canvas id="videoCanvas"></canvas>
+        </div>
+      </div>
+
+      <!-- 右：解析サイドパネル -->
+      <div class="side-panel">
+        <!-- リアルタイムメーター -->
+        <div class="meter-bar">
+          <div class="meter-card plant">
+            <div><span class="meter-phase-tag tag-plant">📍 踏み込み時</span></div>
+            <div class="meter-label" id="labelPlant">① 軸足(左)膝</div>
+            <div class="meter-val plant" id="livePlantKnee">--°</div>
+            <div class="meter-target" id="targetPlantKnee">目標: 125°-145°</div>
+          </div>
+          <div class="meter-card trunk">
+            <div><span class="meter-phase-tag tag-imp">🎯 インパクト時</span></div>
+            <div class="meter-label">② 体幹傾斜角</div>
+            <div class="meter-val trunk" id="liveTrunk">--°</div>
+            <div class="meter-target" id="targetTrunk">目標: 64°-76°</div>
+          </div>
+          <div class="meter-card kick">
+            <div><span class="meter-phase-tag tag-imp">🎯 インパクト時</span></div>
+            <div class="meter-label" id="labelKick">③ 蹴り足(右)膝</div>
+            <div class="meter-val kick" id="liveKickKnee">--°</div>
+            <div class="meter-target" id="targetKickKnee">目標: 135°-158°</div>
+          </div>
+        </div>
+
+        <!-- トリミング設定パネル -->
+        <div class="panel-card" id="trimPanel" style="display:none;">
+          <div class="panel-row">
+            <span>✂️ キック1回分の範囲を指定（マーク表示）</span>
+            <span style="color:var(--kick-color); font-family:monospace;" id="trimDisp">00:00.0 - 00:00.0</span>
+          </div>
+          <div class="btn-grid">
+            <button class="btn-panel trim" id="btnTrimIn">📍 始点 (IN)</button>
+            <button class="btn-panel trim" id="btnTrimOut">🎯 終点 (OUT)</button>
+            <button class="btn-panel primary" id="btnAnalyze">⚡ 解析スタート</button>
+          </div>
+        </div>
+
+        <!-- プロット決定パネル -->
+        <div class="panel-card" id="plotPanel" style="display:none;">
+          <div class="panel-row">
+            <span id="plotTip" style="font-size:0.82em;">下の再生バー・グラフでコマを選んで決定</span>
+            <div class="score-badge" id="scoreDisp">--点</div>
+          </div>
+          <div class="btn-grid">
+            <button class="btn-panel plant" id="btnPlotPlant">
+              📍 ここを【踏み込み】に決定<br>
+              <span id="valPlant" style="font-size:0.82em; font-family:monospace;">軸足: --°</span>
+            </button>
+            <button class="btn-panel kick" id="btnPlotImpact">
+              🎯 ここを【インパクト】に決定<br>
+              <span id="valImpact" style="font-size:0.82em; font-family:monospace;">体幹: --° / 蹴り足: --°</span>
+            </button>
+          </div>
+          <div class="btn-grid">
+            <button class="btn-panel" id="btnJumpPlant" disabled style="opacity:0.5; padding:5px 0;">📍 踏み込みコマへ</button>
+            <button class="btn-panel" id="btnJumpImpact" disabled style="opacity:0.5; padding:5px 0;">🎯 インパクトコマへ</button>
+          </div>
+
+          <!-- アドバイス表示枠 -->
+          <div class="advice-section" id="adviceSection" style="display:none;">
+            <div class="advice-phase-group">
+              <div class="phase-header plant">📍 【踏み込み】軸足のアドバイス</div>
+              <div class="advice-card" id="cardPlant">
+                <span class="advice-title">沈み込み深さ</span>
+                <span class="advice-msg" id="msgPlant">未設定</span>
+              </div>
+            </div>
+
+            <div class="advice-phase-group">
+              <div class="phase-header imp">🎯 【インパクト】体幹・蹴り足のアドバイス</div>
+              <div class="advice-card" id="cardTrunk">
+                <span class="advice-title">体幹の傾斜 (軸倒し)</span>
+                <span class="advice-msg" id="msgTrunk">未設定</span>
+              </div>
+              <div class="advice-card" id="cardKick">
+                <span class="advice-title">蹴り足の伸び (フォロースルー)</span>
+                <span class="advice-msg" id="msgKick">未設定</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 下段：縦幅を倍にしたタイムライン ＆ 再生コントロール -->
+    <div class="bottom-timeline-dock">
+      <div class="dock-head">
+        <span id="timelineTitle">タイムライン (始点・終点マーク表示中)</span>
+        <div class="legend">
+          <span><i class="dot" style="background:var(--plant-color);"></i> 軸足</span>
+          <span><i class="dot" style="background:var(--trunk-color);"></i> 体幹</span>
+          <span><i class="dot" style="background:var(--kick-color);"></i> 蹴り足</span>
+        </div>
+      </div>
+
+      <div class="graph-wrap" id="graphWrapper">
+        <canvas id="graphCanvas"></canvas>
+      </div>
+
+      <div class="timeline-ctrl-bar">
+        <input type="range" id="seekSlider" class="seek-slider" min="0" max="100" value="0" step="0.1">
+        <div class="timeline-ctrl-sub">
+          <div class="ctrl-btns">
+            <button class="btn-act btn-speed" id="btnSpeed">1.0x</button>
+            <button class="btn-act" id="btnPrev" title="1コマ戻る">⏮</button>
+            <button class="btn-act" id="btnPlay" title="再生/一時停止">▶</button>
+            <button class="btn-act" id="btnNext" title="1コマ進む">⏭</button>
+            <span class="time-disp" id="timeDisp">00:00.0 / 00:00.0</span>
+          </div>
+          <button class="btn-capture" id="btnCapture" title="この場面（骨格モーション線付き）をJPEG保存">
+            📸 場面をJPEG保存
+          </button>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const PRESETS = {
+      curve: {
+        name: "カーブ (インフロント)",
+        plantKnee: [125, 145],
+        trunkImp:  [64, 76],
+        kickKnee:  [135, 158]
+      },
+      knuckle: {
+        name: "無回転 (ナックル)",
+        plantKnee: [135, 155],
+        trunkImp:  [78, 88],
+        kickKnee:  [155, 175]
+      },
+      drive: {
+        name: "ドライブ (縦回転)",
+        plantKnee: [120, 140],
+        trunkImp:  [72, 82],
+        kickKnee:  [145, 168]
+      }
+    };
+
+    const BONE_CONNECTIONS = [
+      [11, 12], [11, 23], [12, 24], [23, 24],
+      [11, 13], [13, 15], [12, 14], [14, 16],
+      [23, 25], [25, 27], [24, 26], [26, 28]
+    ];
+
+    const speeds = [1.0, 0.5, 0.25];
+    let curSpeedIdx = 0, isAnalyzing = false, isPoseReady = false;
+    let timelineData = [], plantMoment = null, impactMoment = null, trimStart = 0, trimEnd = 0;
+
+    const $ = id => document.getElementById(id);
+    const video = $('video'), vCanvas = $('videoCanvas'), vCtx = vCanvas.getContext('2d');
+    const gCanvas = $('graphCanvas'), gCtx = gCanvas.getContext('2d'), gWrapper = $('graphWrapper');
+
+    const toDeg = rad => Math.round(Math.abs(rad * 180 / Math.PI));
+    function calcAngle(a, b, c) {
+      if (!a || !b || !c) return 0;
+      let d = toDeg(Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x));
+      return d > 180 ? 360 - d : d;
+    }
+    function calcTrunkAngle(shoulder, hip) {
+      if (!shoulder || !hip) return 0;
+      return toDeg(Math.atan2(shoulder.y - hip.y, shoulder.x - hip.x));
+    }
+    const fmt = s => {
+      const m = Math.floor(s / 60).toString().padStart(2, '0');
+      const sec = Math.floor(s % 60).toString().padStart(2, '0');
+      const ms = Math.floor((s % 1) * 10);
+      return `${m}:${sec}.${ms}`;
+    };
+
+    function updateLabelsAndPresets() {
+      const isRight = $('footScene').value === 'right';
+      $('labelPlant').innerText = isRight ? "① 軸足(左)膝" : "① 軸足(右)膝";
+      $('labelKick').innerText = isRight ? "③ 蹴り足(右)膝" : "③ 蹴り足(左)膝";
+
+      const p = PRESETS[$('fkScene').value];
+      $('targetPlantKnee').innerText = `目標: ${p.plantKnee[0]}°-${p.plantKnee[1]}°`;
+      $('targetTrunk').innerText = `目標: ${p.trunkImp[0]}°-${p.trunkImp[1]}°`;
+      $('targetKickKnee').innerText = `目標: ${p.kickKnee[0]}°-${p.kickKnee[1]}°`;
+    }
+
+    $('footScene').addEventListener('change', () => {
+      updateLabelsAndPresets();
+      recomputeTimeline();
+      if (plantMoment || impactMoment) evaluateScore();
+      renderFrame();
+      renderGraph();
+    });
+
+    $('fkScene').addEventListener('change', () => {
+      updateLabelsAndPresets();
+      if (plantMoment || impactMoment) evaluateScore();
+      renderGraph();
+    });
+
+    const pose = new Pose({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}` });
+    pose.setOptions({ modelComplexity: 1, smoothLandmarks: true, minDetectionConfidence: 0.5 });
+    
+    pose.onResults(res => {
+      if (!res.poseLandmarks || !isAnalyzing) return;
+      const lm = res.poseLandmarks;
+      const isRight = $('footScene').value === 'right';
+
+      const plantKnee = isRight ? calcAngle(lm[23], lm[25], lm[27]) : calcAngle(lm[24], lm[26], lm[28]);
+      const kickKnee = isRight ? calcAngle(lm[24], lm[26], lm[28]) : calcAngle(lm[23], lm[25], lm[27]);
+      const trunk = isRight ? calcTrunkAngle(lm[12], lm[24]) : calcTrunkAngle(lm[11], lm[23]);
+
+      timelineData.push({
+        time: video.currentTime,
+        plantKnee: plantKnee,
+        kickKnee: kickKnee,
+        trunk: trunk,
+        landmarks: lm
+      });
+      drawDirectSkeleton(vCtx, lm, vCanvas.width, vCanvas.height);
+    });
+    pose.initialize().then(() => { isPoseReady = true; });
+
+    function recomputeTimeline() {
+      if (!timelineData.length) return;
+      const isRight = $('footScene').value === 'right';
+      timelineData.forEach(d => {
+        if (!d.landmarks) return;
+        const lm = d.landmarks;
+        d.plantKnee = isRight ? calcAngle(lm[23], lm[25], lm[27]) : calcAngle(lm[24], lm[26], lm[28]);
+        d.kickKnee = isRight ? calcAngle(lm[24], lm[26], lm[28]) : calcAngle(lm[23], lm[25], lm[27]);
+        d.trunk = isRight ? calcTrunkAngle(lm[12], lm[24]) : calcTrunkAngle(lm[11], lm[23]);
+      });
+      if (plantMoment) plantMoment = getClosest(plantMoment.time);
+      if (impactMoment) impactMoment = getClosest(impactMoment.time);
+    }
+
+    function drawDirectSkeleton(ctx, lm, w, h) {
+      if (!lm) return;
+      const isRight = $('footScene').value === 'right';
+
+      ctx.save();
+      BONE_CONNECTIONS.forEach(([i, j]) => {
+        const p1 = lm[i], p2 = lm[j];
+        if (!p1 || !p2 || (p1.visibility < 0.3 && p2.visibility < 0.3)) return;
+
+        ctx.beginPath();
+        ctx.moveTo(p1.x * w, p1.y * h);
+        ctx.lineTo(p2.x * w, p2.y * h);
+
+        if ((isRight && (i === 24 || j === 26 || j === 28)) || (!isRight && (i === 23 || j === 25 || j === 27))) {
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = Math.max(3.5, w / 220);
+        } else if ((isRight && (i === 23 || j === 25 || j === 27)) || (!isRight && (i === 24 || j === 26 || j === 28))) {
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = Math.max(3.5, w / 220);
+        } else if ((i === 11 && j === 12) || (i === 12 && j === 24) || (i === 11 && j === 23) || (i === 23 && j === 24)) {
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = Math.max(3, w / 250);
+        } else {
+          ctx.strokeStyle = '#64748b';
+          ctx.lineWidth = Math.max(2, w / 350);
+        }
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      });
+
+      lm.forEach((pt, idx) => {
+        if (pt.visibility < 0.3) return;
+        ctx.beginPath();
+        ctx.arc(pt.x * w, pt.y * h, Math.max(4, w / 200), 0, Math.PI * 2);
+        if ([23, 24, 25, 26, 27, 28].includes(idx)) {
+          ctx.fillStyle = '#ffffff';
+          ctx.strokeStyle = '#f59e0b';
+          ctx.lineWidth = 2;
+        } else {
+          ctx.fillStyle = '#38bdf8';
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.5;
+        }
+        ctx.fill();
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
+
+    $('videoUpload').addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      video.onloadedmetadata = () => {
+        trimStart = 0;
+        trimEnd = video.duration || 0;
+        updateTrimButtonsUI();
+        $('timeDisp').innerText = `${fmt(0)} / ${fmt(video.duration || 0)}`;
+        video.currentTime = 0.001;
+      };
+
+      video.onseeked = () => { syncCanvasSize(); renderGraph(); };
+      video.src = URL.createObjectURL(file);
+      video.load();
+
+      timelineData = []; plantMoment = null; impactMoment = null;
+      $('trimPanel').style.display = 'flex';
+      $('plotPanel').style.display = 'none';
+      $('adviceSection').style.display = 'none';
+      updateLabelsAndPresets();
+    });
+
+    function syncCanvasSize() {
+      if (!video.videoWidth) return;
+      const rect = video.getBoundingClientRect();
+      vCanvas.style.width = `${rect.width}px`;
+      vCanvas.style.height = `${rect.height}px`;
+      vCanvas.width = video.videoWidth;
+      vCanvas.height = video.videoHeight;
+      gCanvas.width = gWrapper.clientWidth * window.devicePixelRatio;
+      gCanvas.height = gWrapper.clientHeight * window.devicePixelRatio;
+    }
+    window.addEventListener('resize', syncCanvasSize);
+
+    function updateTrimButtonsUI() {
+      $('trimDisp').innerText = `${fmt(trimStart)} - ${fmt(trimEnd)}`;
+      $('btnTrimIn').innerHTML = `📍 始点<br><span style="font-size:0.8em; font-family:monospace;">${fmt(trimStart)}</span>`;
+      $('btnTrimOut').innerHTML = `🎯 終点<br><span style="font-size:0.8em; font-family:monospace;">${fmt(trimEnd)}</span>`;
+      $('btnTrimIn').classList.add('active');
+      $('btnTrimOut').classList.add('active');
+    }
+
+    $('btnTrimIn').onclick = () => {
+      trimStart = video.currentTime;
+      if (trimStart >= trimEnd) trimEnd = video.duration;
+      updateTrimButtonsUI();
+      renderGraph();
+    };
+    $('btnTrimOut').onclick = () => {
+      trimEnd = video.currentTime;
+      if (trimEnd <= trimStart) trimStart = 0;
+      updateTrimButtonsUI();
+      renderGraph();
+    };
+
+    $('btnAnalyze').onclick = async () => {
+      if (!isPoseReady || trimEnd - trimStart < 0.5) {
+        alert(!isPoseReady ? "AI準備中です。" : "解析範囲は0.5秒以上にしてください。");
+        return;
+      }
+      isAnalyzing = true;
+      timelineData = []; plantMoment = null; impactMoment = null;
+      $('trimPanel').style.display = 'none';
+      $('plotPanel').style.display = 'flex';
+      $('adviceSection').style.display = 'none';
+      $('plotTip').innerText = "指定区間を解析中...";
+      resetPlotUI();
+
+      video.currentTime = trimStart;
+      await video.play();
+
+      const loop = async () => {
+        if (!video.paused && !video.ended && video.currentTime <= trimEnd) {
+          await pose.send({ image: video });
+          requestAnimationFrame(loop);
+        } else {
+          video.pause();
+          isAnalyzing = false;
+          timelineData = timelineData.filter(d => d.time >= trimStart && d.time <= trimEnd + 0.05);
+          video.currentTime = trimStart;
+          renderFrame();
+          renderGraph();
+          $('plotTip').innerText = "解析完了。下のタイムラインで【踏み込み】と【インパクト】を決定してください。";
+        }
+      };
+      requestAnimationFrame(loop);
+    };
+
+    function resetPlotUI() {
+      $('valPlant').innerText = "軸足: --°";
+      $('valImpact').innerText = "体幹: --° / 蹴り足: --°";
+      $('btnPlotPlant').classList.remove('active');
+      $('btnPlotImpact').classList.remove('active');
+      $('btnJumpPlant').disabled = true; $('btnJumpPlant').style.opacity = '0.5';
+      $('btnJumpImpact').disabled = true; $('btnJumpImpact').style.opacity = '0.5';
+      $('scoreDisp').innerText = "--点";
+      $('adviceSection').style.display = 'none';
+    }
+
+    const getClosest = t => timelineData.length ? timelineData.reduce((p, c) => Math.abs(c.time - t) < Math.abs(p.time - t) ? c : p) : null;
+
+    $('btnPlotPlant').onclick = () => {
+      const cur = getClosest(video.currentTime);
+      if (!cur) return;
+      plantMoment = cur;
+      $('valPlant').innerText = `軸足: ${plantMoment.plantKnee}°`;
+      $('btnPlotPlant').classList.add('active');
+      $('btnJumpPlant').disabled = false; $('btnJumpPlant').style.opacity = '1';
+      evaluateScore();
+    };
+
+    $('btnPlotImpact').onclick = () => {
+      const cur = getClosest(video.currentTime);
+      if (!cur) return;
+      impactMoment = cur;
+      $('valImpact').innerText = `体幹: ${impactMoment.trunk}° / 蹴り足: ${impactMoment.kickKnee}°`;
+      $('btnPlotImpact').classList.add('active');
+      $('btnJumpImpact').disabled = false; $('btnJumpImpact').style.opacity = '1';
+      evaluateScore();
+    };
+
+    function evaluateScore() {
+      renderGraph();
+      if (!plantMoment && !impactMoment) return;
+      $('adviceSection').style.display = 'flex';
+
+      const p = PRESETS[$('fkScene').value];
+      let sPlant = 0, sTrunk = 0, sKick = 0;
+
+      if (plantMoment) {
+        const k = plantMoment.plantKnee;
+        const [minK, maxK] = p.plantKnee;
+        if (k >= minK && k <= maxK) {
+          sPlant = 100;
+          setAdvice('cardPlant', 'msgPlant', 'good', `◎ 完璧！ 理想的な踏み込みタメ (${k}°)`);
+        } else if (k > maxK) {
+          const diff = k - maxK;
+          sPlant = diff <= 4 ? 90 : Math.max(50, 85 - diff * 2);
+          setAdvice('cardPlant', 'msgPlant', diff <= 4 ? 'fair' : 'warn', `⚠️ 膝が伸び気味！ あと${diff}°曲げて沈もう (${k}°)`);
+        } else {
+          const diff = minK - k;
+          sPlant = diff <= 4 ? 90 : Math.max(50, 85 - diff * 2);
+          setAdvice('cardPlant', 'msgPlant', diff <= 4 ? 'fair' : 'warn', `⚠️ 沈み込みすぎ！ あと${diff}°浅く構えよう (${k}°)`);
+        }
+      }
+
+      if (impactMoment) {
+        const t = impactMoment.trunk;
+        const [minT, maxT] = p.trunkImp;
+        if (t >= minT && t <= maxT) {
+          sTrunk = 100;
+          setAdvice('cardTrunk', 'msgTrunk', 'good', `◎ 完璧！ 最適な体幹軸 (${t}°)`);
+        } else if (t < minT) {
+          const diff = minT - t;
+          sTrunk = diff <= 3 ? 90 : Math.max(50, 85 - diff * 2);
+          setAdvice('cardTrunk', 'msgTrunk', diff <= 3 ? 'fair' : 'warn', `⚠️ 体が外に倒れすぎ！ あと${diff}°起こそう (${t}°)`);
+        } else {
+          const diff = t - maxT;
+          sTrunk = diff <= 3 ? 90 : Math.max(50, 85 - diff * 2);
+          setAdvice('cardTrunk', 'msgTrunk', diff <= 3 ? 'fair' : 'warn', `⚠️ 上体が直立気味！ あと${diff}°適度に倒そう (${t}°)`);
+        }
+
+        const kk = impactMoment.kickKnee;
+        const [minKK, maxKK] = p.kickKnee;
+        if (kk >= minKK && kk <= maxKK) {
+          sKick = 100;
+          setAdvice('cardKick', 'msgKick', 'good', `◎ 完璧！ 鋭い振り抜き (${kk}°)`);
+        } else if (kk > maxKK) {
+          const diff = kk - maxKK;
+          sKick = diff <= 4 ? 90 : Math.max(50, 85 - diff * 2);
+          setAdvice('cardKick', 'msgKick', diff <= 4 ? 'fair' : 'warn', `⚠️ 伸びきり注意！ あと${diff}°ゆとりを持とう (${kk}°)`);
+        } else {
+          const diff = minKK - kk;
+          sKick = diff <= 4 ? 90 : Math.max(50, 85 - diff * 2);
+          setAdvice('cardKick', 'msgKick', diff <= 4 ? 'fair' : 'warn', `⚠️ 伸び不足！ あと${diff}°力強く押し出そう (${kk}°)`);
+        }
+      }
+
+      if (plantMoment && impactMoment) {
+        const total = Math.round((sPlant + sTrunk + sKick) / 3);
+        $('scoreDisp').innerText = `${total}点`;
+        $('plotTip').innerHTML = `プロット完了！改善ポイントを確認してください`;
+      } else {
+        $('scoreDisp').innerText = `--点`;
+        $('plotTip').innerText = plantMoment ? "続けて【インパクト】を決定してください" : "続けて【踏み込み】を決定してください";
+      }
+    }
+
+    function setAdvice(cardId, msgId, status, text) {
+      const card = $(cardId);
+      const msg = $(msgId);
+      card.className = `advice-card ${status}`;
+      msg.className = `advice-msg ${status}`;
+      msg.innerText = text;
+    }
+
+    $('btnJumpPlant').onclick = () => { if (plantMoment) { video.currentTime = plantMoment.time; renderFrame(); renderGraph(); } };
+    $('btnJumpImpact').onclick = () => { if (impactMoment) { video.currentTime = impactMoment.time; renderFrame(); renderGraph(); } };
+
+    function renderGraph() {
+      const W = gCanvas.width, H = gCanvas.height, dpr = window.devicePixelRatio;
+      gCtx.clearRect(0, 0, W, H);
+      const padL = 40 * dpr, padR = 10 * dpr, padT = 16 * dpr, padB = 20 * dpr;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+      const toY = deg => padT + plotH - (deg / 180) * plotH;
+
+      gCtx.font = `bold ${10 * dpr}px monospace`; gCtx.fillStyle = '#64748b'; gCtx.textAlign = 'right';
+      [180, 135, 90, 45, 0].forEach(deg => {
+        const y = toY(deg);
+        gCtx.strokeStyle = '#242f42'; gCtx.lineWidth = 1;
+        gCtx.beginPath(); gCtx.moveTo(padL, y); gCtx.lineTo(W - padR, y); gCtx.stroke();
+        gCtx.fillText(`${deg}°`, padL - 5 * dpr, y + 3 * dpr);
+      });
+
+      if (!video.duration) return;
+
+      if (!timelineData.length) {
+        const totalDur = video.duration;
+        const xIn = padL + (trimStart / totalDur) * plotW;
+        const xOut = padL + (trimEnd / totalDur) * plotW;
+
+        gCtx.fillStyle = 'rgba(16, 185, 129, 0.12)';
+        gCtx.fillRect(xIn, padT, xOut - xIn, plotH);
+
+        gCtx.strokeStyle = '#10b981'; gCtx.lineWidth = 2 * dpr; gCtx.setLineDash([4, 4]);
+        gCtx.beginPath(); gCtx.moveTo(xIn, padT); gCtx.lineTo(xIn, padT + plotH); gCtx.stroke();
+        gCtx.fillStyle = '#10b981'; gCtx.font = `bold ${11 * dpr}px sans-serif`; gCtx.textAlign = 'left';
+        gCtx.fillText(`📍始点 ${fmt(trimStart)}`, xIn + 4 * dpr, padT + 14 * dpr);
+
+        gCtx.strokeStyle = '#f59e0b'; gCtx.lineWidth = 2 * dpr;
+        gCtx.beginPath(); gCtx.moveTo(xOut, padT); gCtx.lineTo(xOut, padT + plotH); gCtx.stroke();
+        gCtx.fillStyle = '#f59e0b'; gCtx.font = `bold ${11 * dpr}px sans-serif`; gCtx.textAlign = 'right';
+        gCtx.fillText(`🎯終点 ${fmt(trimEnd)}`, xOut - 4 * dpr, padT + 14 * dpr);
+        gCtx.setLineDash([]);
+
+        const curX = padL + (video.currentTime / totalDur) * plotW;
+        gCtx.strokeStyle = '#fff'; gCtx.lineWidth = 2 * dpr;
+        gCtx.beginPath(); gCtx.moveTo(curX, padT); gCtx.lineTo(curX, padT + plotH); gCtx.stroke();
+        return;
+      }
+
+      const dur = trimEnd - trimStart;
+      const p = PRESETS[$('fkScene').value];
+
+      const drawZone = (min, max, color) => {
+        const yTop = toY(max), yBtm = toY(min);
+        gCtx.fillStyle = color; gCtx.fillRect(padL, yTop, plotW, yBtm - yTop);
+      };
+      drawZone(p.plantKnee[0], p.plantKnee[1], 'rgba(16, 185, 129, 0.15)');
+      drawZone(p.trunkImp[0], p.trunkImp[1], 'rgba(56, 189, 248, 0.15)');
+      drawZone(p.kickKnee[0], p.kickKnee[1], 'rgba(245, 158, 11, 0.15)');
+
+      const drawLine = (key, color, width) => {
+        gCtx.strokeStyle = color; gCtx.lineWidth = width * dpr; gCtx.beginPath();
+        timelineData.forEach((d, i) => {
+          const x = padL + ((d.time - trimStart) / dur) * plotW;
+          const y = toY(d[key]);
+          if (i === 0) gCtx.moveTo(x, y); else gCtx.lineTo(x, y);
+        });
+        gCtx.stroke();
+      };
+      drawLine('trunk', '#38bdf8', 2);
+      drawLine('plantKnee', '#10b981', 2.5);
+      drawLine('kickKnee', '#f59e0b', 2.5);
+
+      const drawMarker = (moment, color, text) => {
+        if (!moment) return;
+        const x = padL + ((moment.time - trimStart) / dur) * plotW;
+        gCtx.save(); gCtx.strokeStyle = color; gCtx.setLineDash([3, 3]); gCtx.lineWidth = 2 * dpr;
+        gCtx.beginPath(); gCtx.moveTo(x, padT); gCtx.lineTo(x, padT + plotH); gCtx.stroke();
+        gCtx.fillStyle = color; gCtx.font = `bold ${11 * dpr}px sans-serif`; gCtx.textAlign = 'left';
+        gCtx.fillText(text, x + 3 * dpr, padT + 14 * dpr); gCtx.restore();
+      };
+      drawMarker(plantMoment, '#10b981', '📍踏み込み');
+      drawMarker(impactMoment, '#f59e0b', '🎯インパクト');
+
+      if (video.currentTime >= trimStart && video.currentTime <= trimEnd) {
+        const curX = padL + ((video.currentTime - trimStart) / dur) * plotW;
+        gCtx.strokeStyle = '#fff'; gCtx.lineWidth = 2 * dpr;
+        gCtx.beginPath(); gCtx.moveTo(curX, padT); gCtx.lineTo(curX, padT + plotH); gCtx.stroke();
+      }
+    }
+
+    function renderFrame() {
+      if (isAnalyzing || !timelineData.length) return;
+      const cur = getClosest(video.currentTime);
+      vCtx.clearRect(0, 0, vCanvas.width, vCanvas.height);
+      if (cur) {
+        drawDirectSkeleton(vCtx, cur.landmarks, vCanvas.width, vCanvas.height);
+        $('livePlantKnee').innerText = `${cur.plantKnee}°`;
+        $('liveTrunk').innerText = `${cur.trunk}°`;
+        $('liveKickKnee').innerText = `${cur.kickKnee}°`;
+      }
+    }
+
+    video.ontimeupdate = () => {
+      if (!isAnalyzing) {
+        $('timeDisp').innerText = `${fmt(video.currentTime)} / ${fmt(video.duration || 0)}`;
+        $('seekSlider').value = (video.currentTime / video.duration) * 100 || 0;
+        renderFrame();
+        renderGraph();
+      }
+    };
+
+    $('seekSlider').oninput = e => {
+      video.currentTime = (e.target.value / 100) * video.duration;
+      renderFrame(); renderGraph();
+    };
+
+    $('btnPlay').onclick = () => {
+      if (video.paused) { video.play(); $('btnPlay').innerText = '⏸'; }
+      else { video.pause(); $('btnPlay').innerText = '▶'; }
+    };
+
+    $('btnSpeed').onclick = () => {
+      curSpeedIdx = (curSpeedIdx + 1) % speeds.length;
+      video.playbackRate = speeds[curSpeedIdx];
+      $('btnSpeed').innerText = `${speeds[curSpeedIdx]}x`;
+    };
+
+    $('btnPrev').onclick = () => { video.currentTime = Math.max(0, video.currentTime - 0.033); renderFrame(); };
+    $('btnNext').onclick = () => { video.currentTime = Math.min(video.duration, video.currentTime + 0.033); renderFrame(); };
+
+    gWrapper.onclick = e => {
+      if (!video.duration) return;
+      const rect = gWrapper.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const ratio = Math.max(0, Math.min(1, (clickX - 40) / (rect.width - 50)));
+
+      if (!timelineData.length) {
+        video.currentTime = ratio * video.duration;
+      } else {
+        video.currentTime = trimStart + (ratio * (trimEnd - trimStart));
+      }
+      renderFrame(); renderGraph();
+    };
+
+    /* 📸 場面単体（画像＋骨格線）のJPEG保存 */
+    $('btnCapture').onclick = () => {
+      if (!video.videoWidth || !video.videoHeight) {
+        alert("動画が読み込まれていません。");
+        return;
+      }
+
+      const w = video.videoWidth;
+      const h = video.videoHeight;
+      const offCanvas = document.createElement('canvas');
+      offCanvas.width = w;
+      offCanvas.height = h;
+      const ctx = offCanvas.getContext('2d');
+
+      ctx.drawImage(video, 0, 0, w, h);
+
+      const cur = getClosest(video.currentTime);
+      if (cur && cur.landmarks) {
+        drawDirectSkeleton(ctx, cur.landmarks, w, h);
+      }
+
+      const scale = Math.max(1, w / 1200);
+      const cardW = 380 * scale;
+      const cardH = 145 * scale;
+      const margin = 20 * scale;
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(10, 13, 20, 0.86)';
+      ctx.strokeStyle = '#242f42';
+      ctx.lineWidth = 2 * scale;
+      ctx.beginPath();
+      ctx.roundRect(margin, margin, cardW, cardH, 10 * scale);
+      ctx.fill();
+      ctx.stroke();
+
+      const isRight = $('footScene').value === 'right';
+      const footText = isRight ? "右利き (右足)" : "左利き (左足)";
+      const sceneText = PRESETS[$('fkScene').value].name;
+
+      ctx.fillStyle = '#10b981';
+      ctx.font = `bold ${16 * scale}px sans-serif`;
+      ctx.fillText("⚽ SOCCER-FK", margin + 16 * scale, margin + 28 * scale);
+
+      ctx.fillStyle = '#f1f5f9';
+      ctx.font = `bold ${13 * scale}px sans-serif`;
+      ctx.fillText(`${sceneText} | ${footText}`, margin + 16 * scale, margin + 52 * scale);
+
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = `${11 * scale}px monospace`;
+      ctx.fillText(`時刻: ${fmt(video.currentTime)}`, margin + 16 * scale, margin + 74 * scale);
+
+      if (cur) {
+        ctx.font = `bold ${13 * scale}px monospace`;
+        ctx.fillStyle = '#10b981';
+        ctx.fillText(`軸足: ${cur.plantKnee}°`, margin + 16 * scale, margin + 102 * scale);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillText(`体幹: ${cur.trunk}°`, margin + 130 * scale, margin + 102 * scale);
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillText(`蹴り足: ${cur.kickKnee}°`, margin + 240 * scale, margin + 102 * scale);
+      }
+
+      const scoreText = $('scoreDisp').innerText !== "--点" ? `評価: ${$('scoreDisp').innerText}` : "未採点";
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `bold ${14 * scale}px sans-serif`;
+      ctx.fillText(scoreText, margin + 16 * scale, margin + 130 * scale);
+      ctx.restore();
+
+      offCanvas.toBlob(blob => {
+        if (!blob) return;
+        const now = new Date();
+        const dateStr = now.toISOString().replace(/[-:T]/g, '').slice(0, 14);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `FK_shot_${$('fkScene').value}_${dateStr}.jpg`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+      }, 'image/jpeg', 0.95);
+    };
+  </script>
+</body>
+</html>
